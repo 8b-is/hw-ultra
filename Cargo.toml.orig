@@ -1,0 +1,16 @@
+[package]
+name = "hardware"
+version = "0.0.9"
+edition = "2021"
+description = "A no_std bare-metal hardware abstraction layer — all port I/O, memory and swap allocations are guarded at runtime. Do not consider this dependency stable before x.1.x"
+license = "MIT"
+homepage = "https://nativeneuralecosystem.sciforge-presentation.workers.dev/hardware"
+include = ["src/**", "tests/**", "docs/**", "Cargo.toml", "LICENSE", "README.md", "CHANGELOG.md"]
+[lib]
+name = "hardware"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
