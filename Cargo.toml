@@ -11,8 +11,8 @@
 
 [package]
 edition = "2021"
-name = "hw-ultra"
-version = "0.1.1"
+name = "hw_ultra"
+version = "0.1.2"
 build = false
 include = [
     "src/**",
@@ -34,7 +34,7 @@ readme = "README.md"
 license = "MIT"
 
 [lib]
-name = "hw-ultra"
+name = "hw_ultra"
 path = "src/lib.rs"
 
 [[test]]
