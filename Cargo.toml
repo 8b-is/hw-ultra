@@ -58,3 +58,7 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+[[test]]
+name = "bump_allocator"
+path = "tests/bump_allocator.rs"

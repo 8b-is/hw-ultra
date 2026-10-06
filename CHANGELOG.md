@@ -3,6 +3,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Keep exhausted hardware operation guards closed instead of wrapping their counters and allowing more operations.
+- Reserve shared bump-heap ranges atomically so concurrent allocations cannot overlap; reject overflowing alignment arithmetic and retain Guardian capacity limits. Document that reset requires all heap users to be quiescent.
+
 ## 0.0.9 — 2026-03-27
 
 ### Changed

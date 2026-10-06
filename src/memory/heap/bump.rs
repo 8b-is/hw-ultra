@@ -29,28 +29,39 @@ impl BumpAllocator {
         }
 
         let heap_ptr = BUMP_HEAP.0.get() as *mut u8 as usize;
-        let heap_end = heap_ptr.saturating_add(BUMP_HEAP_SIZE);
-        let mut ptr = BUMP_PTR.load(Ordering::Acquire);
-        if ptr == 0 {
-            ptr = heap_ptr;
-            BUMP_PTR.store(ptr, Ordering::Release);
-        }
-        let aligned = (ptr + (align - 1)) & !(align - 1);
-        let current_used = aligned.saturating_sub(heap_ptr);
-        if !crate::arch::guardian::gate_heap(current_used, size, BUMP_HEAP_SIZE) {
-            return core::ptr::null_mut();
-        }
-        let next = aligned.saturating_add(size);
-        if next > heap_end {
-            core::ptr::null_mut()
-        } else {
-            BUMP_PTR.store(next, Ordering::Release);
-            aligned as *mut u8
+        // Store an offset: zero is a valid initial cursor, not a racy sentinel.
+        let mut offset = BUMP_PTR.load(Ordering::Acquire);
+        loop {
+            let Some(aligned) = heap_ptr
+                .checked_add(offset)
+                .and_then(|ptr| ptr.checked_add(align - 1))
+                .map(|ptr| ptr & !(align - 1))
+            else {
+                return core::ptr::null_mut();
+            };
+            let current_used = aligned - heap_ptr;
+            if !crate::arch::guardian::gate_heap(current_used, size, BUMP_HEAP_SIZE) {
+                return core::ptr::null_mut();
+            }
+            let Some(next) = current_used.checked_add(size) else {
+                return core::ptr::null_mut();
+            };
+            if next > BUMP_HEAP_SIZE {
+                return core::ptr::null_mut();
+            }
+            match BUMP_PTR.compare_exchange_weak(offset, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => return aligned as *mut u8,
+                Err(actual) => offset = actual,
+            }
         }
     }
 
+    /// Rewinds the shared heap used by every allocator instance.
+    /// Callers must stop allocations and stop using previously returned pointers
+    /// before resetting; this is not a per-instance deallocation operation.
+
     pub fn reset(&self) {
-        let heap_ptr = BUMP_HEAP.0.get() as *mut u8 as usize;
-        BUMP_PTR.store(heap_ptr, Ordering::Release);
+        BUMP_PTR.store(0, Ordering::Release);
     }
 }
