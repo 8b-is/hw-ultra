@@ -1,4 +1,4 @@
-use hardware::sys;
+use hw_ultra::sys;
 
 fn configure_drm_only() {
     sys::gpu::set_drm_constants(sys::gpu::DrmConstants {

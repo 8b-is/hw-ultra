@@ -1,6 +1,7 @@
+#![cfg(target_arch = "x86_64")]
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering as StdOrdering};
-use hardware::sys;
-use hardware::sys::{detect_arch, Architecture};
+use hw_ultra::sys;
+use hw_ultra::sys::{detect_arch, Architecture};
 
 fn configure_linux_tables() {
     let arch = detect_arch();
@@ -107,7 +108,7 @@ fn configure_linux_tables() {
         }
         _ => {}
     }
-    hardware::sys::gpu::set_drm_constants(hardware::sys::gpu::DrmConstants {
+    hw_ultra::sys::gpu::set_drm_constants(hw_ultra::sys::gpu::DrmConstants {
         ioctl_version: 0xC040_6400,
         ioctl_gem_close: 0x4008_6409,
         ioctl_radeon_info: 0xC010_6467,
@@ -168,7 +169,7 @@ fn ensure_init() {
         .compare_exchange(false, true, StdOrdering::AcqRel, StdOrdering::Acquire)
         .is_ok()
     {
-        hardware::sys::init_shims();
+        hw_ultra::sys::init_shims();
         configure_linux_tables();
         sys::request_hw_privilege();
         INIT_COMPLETE.store(true, StdOrdering::Release);
@@ -395,11 +396,11 @@ fn detect_architecture() {
 fn detect_cpu_full() {
     ensure_init();
     acquire_test_lock();
-    let info = hardware::sys::cpu::detect_cpu_info();
+    let info = hw_ultra::sys::cpu::detect_cpu_info();
     assert!(info.is_some(), "CPU detection must find a CPU");
     let info = info.unwrap();
 
-    let model = hardware::sys::cpu::api::model_name_str(&info);
+    let model = hw_ultra::sys::cpu::api::model_name_str(&info);
 
     assert!(
         info.physical_cores > 0,
@@ -458,12 +459,12 @@ fn detect_cpu_full() {
 fn detect_cpu_cores() {
     ensure_init();
     acquire_test_lock();
-    let mut cores = [hardware::sys::cpu::api::CoreInfo {
+    let mut cores = [hw_ultra::sys::cpu::api::CoreInfo {
         core_id: 0,
         frequency_hz: 0,
         raw_temp: None,
     }; 64];
-    let found = hardware::sys::cpu::api::detect_cores(&mut cores);
+    let found = hw_ultra::sys::cpu::api::detect_cores(&mut cores);
     assert!(found > 0, "Must detect at least 1 core");
     let sysfs_freq = read_sysfs_max_freq_mhz();
     log("[OK]  cpu_cores: ");
@@ -490,7 +491,7 @@ fn detect_cpu_cores() {
 fn detect_topology() {
     ensure_init();
     acquire_test_lock();
-    let topo = hardware::sys::topology::detect_topology();
+    let topo = hw_ultra::sys::topology::detect_topology();
     assert!(topo.sockets > 0, "Must detect at least 1 socket");
     assert!(
         topo.cores_per_socket > 0,
@@ -508,7 +509,7 @@ fn detect_topology() {
 fn detect_system_topology() {
     ensure_init();
     acquire_test_lock();
-    let sys = hardware::sys::topology::system::detect();
+    let sys = hw_ultra::sys::topology::system::detect();
     assert!(sys.total_cores > 0, "System must have at least 1 core");
     assert!(sys.total_threads > 0, "System must have at least 1 thread");
     assert!(sys.total_threads >= sys.total_cores, "Threads >= cores");
@@ -526,7 +527,7 @@ fn detect_system_topology() {
 fn detect_ram() {
     ensure_init();
     acquire_test_lock();
-    let mem = hardware::sys::detect_memory_info();
+    let mem = hw_ultra::sys::detect_memory_info();
     assert!(mem.is_some(), "Must detect RAM");
     let mem = mem.unwrap();
     assert!(mem.total_bytes > 0, "Must detect RAM");
@@ -546,7 +547,7 @@ fn detect_ram() {
 fn detect_gpu() {
     ensure_init();
     acquire_test_lock();
-    let mut gpus = [hardware::sys::gpu::GpuDevice {
+    let mut gpus = [hw_ultra::sys::gpu::GpuDevice {
         bus: 0,
         device: 0,
         function: 0,
@@ -557,7 +558,7 @@ fn detect_gpu() {
         prog_if: 0,
         bar0: 0,
     }; 8];
-    let count = hardware::sys::gpu::detect_gpus(&mut gpus);
+    let count = hw_ultra::sys::gpu::detect_gpus(&mut gpus);
     if count == 0 {
         if !sys::has_hw_privilege() {
             logln("[--]  gpu: skipped (no I/O port access, need root)");
@@ -579,10 +580,10 @@ fn detect_gpu() {
             log("]");
             if gpus[i].vendor_id == 0x13B5 && gpus[i].device_id != 0x0001 {
                 log(" ");
-                log(hardware::sys::gpu::mali_product_name(gpus[i].device_id));
+                log(hw_ultra::sys::gpu::mali_product_name(gpus[i].device_id));
             } else if gpus[i].vendor_id == 0x5143 && gpus[i].device_id != 0x0001 {
                 log(" ");
-                log(hardware::sys::gpu::adreno_product_name(gpus[i].device_id));
+                log(hw_ultra::sys::gpu::adreno_product_name(gpus[i].device_id));
             }
             logln("");
             i += 1;
@@ -680,18 +681,18 @@ fn detect_pci_devices_summary() {
 fn detect_cpu_features() {
     ensure_init();
     acquire_test_lock();
-    let arch = hardware::sys::detect_arch();
+    let arch = hw_ultra::sys::detect_arch();
     let x86_features: &[&str] = &["sse", "sse2", "avx", "avx2", "aes", "fma"];
     let arm_features: &[&str] = &["asimd", "aes", "sha1", "sha2", "crc32", "atomics", "fp"];
     let features: &[&str] = match arch {
-        hardware::sys::Architecture::X86_64 => x86_features,
-        hardware::sys::Architecture::AArch64 => arm_features,
+        hw_ultra::sys::Architecture::X86_64 => x86_features,
+        hw_ultra::sys::Architecture::AArch64 => arm_features,
         _ => x86_features,
     };
     logln("[OK]  cpu features:");
     let mut i = 0;
     while i < features.len() {
-        let has = hardware::sys::cpu::features::has_feature(features[i]);
+        let has = hw_ultra::sys::cpu::features::has_feature(features[i]);
         log("      ");
         log(features[i]);
         log(": ");
@@ -705,14 +706,14 @@ fn detect_cpu_features() {
 fn detect_power_governor() {
     ensure_init();
     acquire_test_lock();
-    let policy = hardware::sys::power::governor::Governor::get_policy();
+    let policy = hw_ultra::sys::power::governor::Governor::get_policy();
     let name = match policy {
-        hardware::sys::power::governor::GovernorPolicy::Performance => "performance",
-        hardware::sys::power::governor::GovernorPolicy::Powersave => "powersave",
-        hardware::sys::power::governor::GovernorPolicy::OnDemand => "ondemand",
-        hardware::sys::power::governor::GovernorPolicy::Conservative => "conservative",
-        hardware::sys::power::governor::GovernorPolicy::Schedutil => "schedutil",
-        hardware::sys::power::governor::GovernorPolicy::Unknown => "unknown",
+        hw_ultra::sys::power::governor::GovernorPolicy::Performance => "performance",
+        hw_ultra::sys::power::governor::GovernorPolicy::Powersave => "powersave",
+        hw_ultra::sys::power::governor::GovernorPolicy::OnDemand => "ondemand",
+        hw_ultra::sys::power::governor::GovernorPolicy::Conservative => "conservative",
+        hw_ultra::sys::power::governor::GovernorPolicy::Schedutil => "schedutil",
+        hw_ultra::sys::power::governor::GovernorPolicy::Unknown => "unknown",
     };
     log("[OK]  power_governor: ");
     logln(name);
@@ -729,8 +730,8 @@ fn detect_all_components_summary() {
     log("  Architecture : ");
     logln(arch_name(arch));
 
-    if let Some(info) = hardware::sys::cpu::detect_cpu_info() {
-        let model = hardware::sys::cpu::api::model_name_str(&info);
+    if let Some(info) = hw_ultra::sys::cpu::detect_cpu_info() {
+        let model = hw_ultra::sys::cpu::api::model_name_str(&info);
         let freq = if info.frequency_hz > 0 {
             info.frequency_hz / 1_000_000
         } else {
@@ -756,7 +757,7 @@ fn detect_all_components_summary() {
         logln("KB");
     }
 
-    let topo = hardware::sys::topology::system::detect();
+    let topo = hw_ultra::sys::topology::system::detect();
     log("  Topology     : ");
     log_u64(topo.sockets as u64);
     log(" socket(s), ");
@@ -765,13 +766,13 @@ fn detect_all_components_summary() {
     log_u64(topo.total_threads as u64);
     logln(" threads");
 
-    if let Some(mem) = hardware::sys::detect_memory_info() {
+    if let Some(mem) = hw_ultra::sys::detect_memory_info() {
         log("  RAM          : ");
         log_u64(mem.total_bytes / (1024 * 1024 * 1024));
         logln(" GB");
     }
 
-    let mut gpus = [hardware::sys::gpu::GpuDevice {
+    let mut gpus = [hw_ultra::sys::gpu::GpuDevice {
         bus: 0,
         device: 0,
         function: 0,
@@ -782,7 +783,7 @@ fn detect_all_components_summary() {
         prog_if: 0,
         bar0: 0,
     }; 8];
-    let gpu_count = hardware::sys::gpu::detect_gpus(&mut gpus);
+    let gpu_count = hw_ultra::sys::gpu::detect_gpus(&mut gpus);
     if gpu_count == 0 {
         if sys::has_hw_privilege() {
             logln("  GPU          : none");

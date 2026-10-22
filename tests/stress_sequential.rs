@@ -1,5 +1,5 @@
 use core::sync::atomic::{AtomicBool, Ordering as StdOrdering};
-use hardware::sys;
+use hw_ultra::sys;
 
 fn configure_linux_tables() {
     let arch = sys::detect_arch();
@@ -106,7 +106,7 @@ fn configure_linux_tables() {
         }
         _ => {}
     }
-    hardware::sys::gpu::set_drm_constants(hardware::sys::gpu::DrmConstants {
+    hw_ultra::sys::gpu::set_drm_constants(hw_ultra::sys::gpu::DrmConstants {
         ioctl_version: 0xC040_6400,
         ioctl_gem_close: 0x4008_6409,
         ioctl_radeon_info: 0xC010_6467,
@@ -142,7 +142,7 @@ fn ensure_init() {
         .compare_exchange(false, true, StdOrdering::AcqRel, StdOrdering::Acquire)
         .is_ok()
     {
-        hardware::sys::init_shims();
+        hw_ultra::sys::init_shims();
         configure_linux_tables();
         sys::request_hw_privilege();
         INIT_COMPLETE.store(true, StdOrdering::Release);
@@ -205,15 +205,15 @@ fn elapsed_ms(start: u64, end: u64) -> u64 {
 #[test]
 fn stress_sequential_guardian_enforcement() {
     ensure_init();
-    let cpu = hardware::sys::cpu::detect_cpu_info().expect("CPU detection must succeed");
-    let mem = hardware::sys::detect_memory_info().expect("Memory detection must succeed");
+    let cpu = hw_ultra::sys::cpu::detect_cpu_info().expect("CPU detection must succeed");
+    let mem = hw_ultra::sys::detect_memory_info().expect("Memory detection must succeed");
     let total_cpus = cpu.logical_cores as usize;
 
     logln("\n========== Guardian Enforcement Stress Test (100% attempt) ==========");
     log("  CPU: ");
     log(cpu.vendor);
     log(" ");
-    log(hardware::sys::cpu::api::model_name_str(&cpu));
+    log(hw_ultra::sys::cpu::api::model_name_str(&cpu));
     log(" (");
     log_u64(cpu.physical_cores as u64);
     log(" phys / ");
@@ -240,9 +240,9 @@ fn stress_sequential_guardian_enforcement() {
     log_u64(cpu.l3_cache_kb as u64);
     logln("KB");
 
-    hardware::sys::runtime::resources::set_memory_capacity(mem.available_bytes);
-    hardware::sys::runtime::resources::set_swap_capacity(mem.swap_total_bytes);
-    hardware::sys::runtime::resources::set_cpu_capacity(cpu.logical_cores as u64);
+    hw_ultra::sys::runtime::resources::set_memory_capacity(mem.available_bytes);
+    hw_ultra::sys::runtime::resources::set_swap_capacity(mem.swap_total_bytes);
+    hw_ultra::sys::runtime::resources::set_cpu_capacity(cpu.logical_cores as u64);
     logln("  Guardian: memory limit 80% of available, swap limit 50%, CPU limit 80%");
 
     logln("\n--- Phase 1: CPU (100% attempt — guardian should cap at 80%) ---");
@@ -284,7 +284,7 @@ fn stress_sequential_guardian_enforcement() {
     let mut j = 0;
     while j < pid_count {
         sys::waitpid(pids[j]);
-        hardware::sys::runtime::resources::free_cpu(1);
+        hw_ultra::sys::runtime::resources::free_cpu(1);
         j += 1;
     }
     let cpu_elapsed = sys::monotonic_ns() - start;
@@ -321,7 +321,7 @@ fn stress_sequential_guardian_enforcement() {
     let mut guardian_blocked = false;
     let mut ci = 0;
     while ci < num_chunks && ci < 1024 {
-        if !hardware::sys::runtime::resources::try_alloc_memory(chunk_size) {
+        if !hw_ultra::sys::runtime::resources::try_alloc_memory(chunk_size) {
             log("  Guardian: memory limit (80%) reached after ");
             log_u64((ci * chunk_size / (1024 * 1024)) as u64);
             logln(" MB — stopping allocation");
@@ -330,7 +330,7 @@ fn stress_sequential_guardian_enforcement() {
         }
         let ptr = sys::sys_mmap_anon(chunk_size);
         if ptr.is_null() {
-            hardware::sys::runtime::resources::free_memory(chunk_size);
+            hw_ultra::sys::runtime::resources::free_memory(chunk_size);
             break;
         }
         let pattern = (ci & 0xFF) as u8;
@@ -375,7 +375,7 @@ fn stress_sequential_guardian_enforcement() {
         chunks[fi] = core::ptr::null_mut();
         fi += 1;
     }
-    hardware::sys::runtime::resources::reset_counters();
+    hw_ultra::sys::runtime::resources::reset_counters();
     sys::sched_yield();
     log("  RAM stress done (");
     log_u64((alloc_count * chunk_size / (1024 * 1024)) as u64);
@@ -542,7 +542,7 @@ fn stress_sequential_guardian_enforcement() {
     let mut yj = 0;
     while yj < ypid_count {
         sys::waitpid(ypids[yj]);
-        hardware::sys::runtime::resources::free_cpu(1);
+        hw_ultra::sys::runtime::resources::free_cpu(1);
         yj += 1;
     }
     let yield_ns = sys::monotonic_ns() - start;
@@ -559,7 +559,7 @@ fn stress_sequential_guardian_enforcement() {
     }
 
     logln("\n--- Phase 6: Swap space stress (100% attempt — guardian should cap at 50%) ---");
-    let fresh_mem = hardware::sys::detect_memory_info();
+    let fresh_mem = hw_ultra::sys::detect_memory_info();
     let swap_total = if let Some(ref m) = fresh_mem {
         m.swap_total_bytes
     } else {
@@ -610,7 +610,7 @@ fn stress_sequential_guardian_enforcement() {
         let mut guardian_swap_blocked = false;
         let mut si = 0;
         while si < swap_n {
-            if !hardware::sys::runtime::resources::try_alloc_swap(swap_chunk) {
+            if !hw_ultra::sys::runtime::resources::try_alloc_swap(swap_chunk) {
                 log("  Guardian: swap limit (50%) reached after ");
                 log_u64((si * swap_chunk / (1024 * 1024)) as u64);
                 logln(" MB — stopping allocation to prevent crash");
@@ -619,7 +619,7 @@ fn stress_sequential_guardian_enforcement() {
             }
             let ptr = sys::sys_mmap_anon(swap_chunk);
             if ptr.is_null() {
-                hardware::sys::runtime::resources::free_swap(swap_chunk);
+                hw_ultra::sys::runtime::resources::free_swap(swap_chunk);
                 break;
             }
             let pattern = ((si * 37 + 13) & 0xFF) as u8;
@@ -634,7 +634,7 @@ fn stress_sequential_guardian_enforcement() {
             swap_count += 1;
 
             if (si + 1) % 50 == 0 {
-                if let Some(cur_mem) = hardware::sys::detect_memory_info() {
+                if let Some(cur_mem) = hw_ultra::sys::detect_memory_info() {
                     let used = cur_mem.swap_total_bytes - cur_mem.swap_free_bytes;
                     let pct = used * 100 / swap_total;
                     log("    ... ");
@@ -655,7 +655,7 @@ fn stress_sequential_guardian_enforcement() {
         log_u64(elapsed_ms(0, swap_ns));
         logln("ms");
 
-        if let Some(final_mem) = hardware::sys::detect_memory_info() {
+        if let Some(final_mem) = hw_ultra::sys::detect_memory_info() {
             let final_used = final_mem.swap_total_bytes - final_mem.swap_free_bytes;
             log("  Swap usage: ");
             log_u64(final_used / (1024 * 1024));
@@ -687,7 +687,7 @@ fn stress_sequential_guardian_enforcement() {
             sys::sys_munmap(swap_ptrs[sfi], swap_chunk);
             sfi += 1;
         }
-        hardware::sys::runtime::resources::reset_counters();
+        hw_ultra::sys::runtime::resources::reset_counters();
         if guardian_swap_blocked {
             logln("  Swap stress done (guardian enforced 50% limit — crash prevented)");
         } else {
@@ -699,7 +699,7 @@ fn stress_sequential_guardian_enforcement() {
     }
 
     logln("\n--- Phase 7: GPU stress (real hardware via DRM) ---");
-    let mut gpus = [hardware::sys::gpu::GpuDevice {
+    let mut gpus = [hw_ultra::sys::gpu::GpuDevice {
         bus: 0,
         device: 0,
         function: 0,
@@ -710,7 +710,7 @@ fn stress_sequential_guardian_enforcement() {
         prog_if: 0,
         bar0: 0,
     }; 8];
-    let gpu_count = hardware::sys::gpu::detect_gpus(&mut gpus);
+    let gpu_count = hw_ultra::sys::gpu::detect_gpus(&mut gpus);
     if gpu_count == 0 {
         if !sys::has_hw_privilege() {
             logln("  PCI scan skipped (no iopl, need root)");
@@ -739,13 +739,13 @@ fn stress_sequential_guardian_enforcement() {
     }
 
     logln("  Opening DRM device...");
-    if let Some(mut drm) = hardware::sys::gpu::drm::open() {
+    if let Some(mut drm) = hw_ultra::sys::gpu::drm::open() {
         let driver_name = match drm.driver {
-            hardware::sys::gpu::drm::DrmDriver::Radeon => "radeon",
-            hardware::sys::gpu::drm::DrmDriver::Amdgpu => "amdgpu",
-            hardware::sys::gpu::drm::DrmDriver::Nouveau => "nouveau",
-            hardware::sys::gpu::drm::DrmDriver::I915 => "i915",
-            hardware::sys::gpu::drm::DrmDriver::Unknown => "unknown",
+            hw_ultra::sys::gpu::drm::DrmDriver::Radeon => "radeon",
+            hw_ultra::sys::gpu::drm::DrmDriver::Amdgpu => "amdgpu",
+            hw_ultra::sys::gpu::drm::DrmDriver::Nouveau => "nouveau",
+            hw_ultra::sys::gpu::drm::DrmDriver::I915 => "i915",
+            hw_ultra::sys::gpu::drm::DrmDriver::Unknown => "unknown",
         };
         log("  DRM driver: ");
         logln(driver_name);

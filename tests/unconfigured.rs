@@ -1,4 +1,4 @@
-use hardware::sys;
+use hw_ultra::sys;
 
 #[test]
 fn syscall_nrs_default_to_not_implemented() {
