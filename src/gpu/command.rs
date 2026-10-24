@@ -29,7 +29,7 @@ impl Command {
         self.opcode == 0
     }
 
-    pub fn submit(&self, sched: &crate::gpu::scheduler::GpuScheduler) -> bool {
+    pub fn submit(&self, sched: &mut crate::gpu::scheduler::GpuScheduler) -> bool {
         sched.submit(*self)
     }
 }
