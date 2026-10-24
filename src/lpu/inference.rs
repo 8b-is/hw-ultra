@@ -18,6 +18,11 @@ pub struct InferenceResult {
     pub quantized: bool,
 }
 
+/// An owned inference engine; mutation requires an exclusive borrow.
+/// ```compile_fail
+/// use hw_ultra::sys::lpu::inference::{Inference, InferenceRequest};
+/// fn shared(engine: &Inference, request: InferenceRequest) { engine.submit(request); }
+/// ```
 pub struct Inference {
     pipeline: LpuPipeline,
 }
@@ -35,7 +40,7 @@ impl Inference {
         }
     }
 
-    pub fn submit(&self, req: InferenceRequest) -> bool {
+    pub fn submit(&mut self, req: InferenceRequest) -> bool {
         if req.token_count == 0 || req.hidden_size == 0 || req.align == 0 {
             return false;
         }
@@ -51,7 +56,7 @@ impl Inference {
         })
     }
 
-    pub fn run_next(&self, device: &LpuDevice) -> Result<InferenceResult, &'static str> {
+    pub fn run_next(&mut self, device: &LpuDevice) -> Result<InferenceResult, &'static str> {
         let job = self.pipeline.pop().ok_or("pipeline empty")?;
         let mut left = job.bytes;
         let mut submitted = 0usize;
@@ -71,5 +76,29 @@ impl Inference {
 
     pub fn pending(&self) -> usize {
         self.pipeline.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn validates_requests_without_hardware() {
+        let mut e = Inference::new();
+        let mut r = InferenceRequest {
+            token_count: 0,
+            hidden_size: 1,
+            format: QuantFormat::Q8,
+            flags: 0,
+            align: 1,
+        };
+        assert!(!e.submit(r));
+        assert_eq!(e.pending(), 0);
+        r.token_count = 1;
+        for _ in 0..32 {
+            assert!(e.submit(r));
+        }
+        assert_eq!(e.pending(), 32);
+        assert!(!e.submit(r));
     }
 }

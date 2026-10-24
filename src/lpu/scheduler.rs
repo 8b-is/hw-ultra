@@ -1,73 +1,41 @@
+use crate::common::spsc;
 use crate::lpu::device::LpuDevice;
 use crate::lpu::inference::{Inference, InferenceRequest, InferenceResult};
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
-const SCHED_CAPACITY: usize = 32;
-
+const SCHED_SLOTS: usize = 33;
+pub type Producer<'a> = spsc::Producer<'a, InferenceRequest, SCHED_SLOTS>;
+pub type Consumer<'a> = spsc::Consumer<'a, InferenceRequest, SCHED_SLOTS>;
 pub struct LpuScheduler {
-    queue: UnsafeCell<[Option<InferenceRequest>; SCHED_CAPACITY]>,
-    head: AtomicUsize,
-    tail: AtomicUsize,
-    count: AtomicUsize,
+    queue: spsc::Queue<InferenceRequest, SCHED_SLOTS>,
 }
-
-unsafe impl Sync for LpuScheduler {}
-
 impl Default for LpuScheduler {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl LpuScheduler {
     pub const fn new() -> Self {
-        LpuScheduler {
-            queue: UnsafeCell::new([None; SCHED_CAPACITY]),
-            head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
-            count: AtomicUsize::new(0),
+        Self {
+            queue: spsc::Queue::new(),
         }
     }
-
-    pub fn enqueue(&self, req: InferenceRequest) -> bool {
-        let count = self.count.load(Ordering::Acquire);
-        if count >= SCHED_CAPACITY {
-            return false;
-        }
-        let head = self.head.load(Ordering::Acquire);
-        unsafe {
-            (*self.queue.get())[head] = Some(req);
-        }
-        self.head
-            .store((head + 1) % SCHED_CAPACITY, Ordering::Release);
-        self.count.fetch_add(1, Ordering::AcqRel);
-        true
+    pub fn split(&mut self) -> (Producer<'_>, Consumer<'_>) {
+        self.queue.split()
     }
-
-    pub fn dequeue(&self) -> Option<InferenceRequest> {
-        let count = self.count.load(Ordering::Acquire);
-        if count == 0 {
-            return None;
-        }
-        let tail = self.tail.load(Ordering::Acquire);
-        let req = unsafe {
-            let queue = &mut *self.queue.get();
-            queue[tail].take()
-        };
-        self.tail
-            .store((tail + 1) % SCHED_CAPACITY, Ordering::Release);
-        self.count.fetch_sub(1, Ordering::AcqRel);
-        req
+    pub fn enqueue(&mut self, req: InferenceRequest) -> bool {
+        let (mut producer, _) = self.split();
+        producer.enqueue(req).is_ok()
     }
-
+    pub fn dequeue(&mut self) -> Option<InferenceRequest> {
+        let (_, mut consumer) = self.split();
+        consumer.dequeue()
+    }
     pub fn pending(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        self.queue.len()
     }
-
     pub fn run_one(
-        &self,
-        engine: &Inference,
+        &mut self,
+        engine: &mut Inference,
         device: &LpuDevice,
     ) -> Result<InferenceResult, &'static str> {
         let req = self.dequeue().ok_or("scheduler empty")?;
@@ -75,5 +43,35 @@ impl LpuScheduler {
             return Err("pipeline submit failed");
         }
         engine.run_next(device)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lpu::quantization::QuantFormat;
+    #[test]
+    fn preserves_all_32_requests_and_split_ownership() {
+        let mut s = LpuScheduler::new();
+        let req = |flags| InferenceRequest {
+            token_count: 1,
+            hidden_size: 1,
+            format: QuantFormat::Q8,
+            flags,
+            align: 1,
+        };
+        for flags in 0..32 {
+            assert!(s.enqueue(req(flags)));
+        }
+        assert_eq!(s.pending(), 32);
+        assert!(!s.enqueue(req(99)));
+        for flags in 0..32 {
+            assert_eq!(s.dequeue().unwrap().flags, flags);
+        }
+        {
+            let (mut producer, mut consumer) = s.split();
+            assert!(producer.enqueue(req(42)).is_ok());
+            assert_eq!(consumer.dequeue().unwrap().flags, 42);
+        }
+        assert_eq!(s.pending(), 0);
     }
 }

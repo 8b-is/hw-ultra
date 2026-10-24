@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Changed
+- LPU pipeline, scheduler and inference mutation now requires owned mutable access. Lifecycle accessors transfer each initialized engine/scheduler once via `take_inference` and `take_scheduler`; queue split endpoints preserve concurrent producer/consumer use and the 32-item capacity. This is a source-breaking migration.
+
 ### Fixed
 - Keep exhausted hardware operation guards closed instead of wrapping their counters and allowing more operations.
 - Reserve shared bump-heap ranges atomically so concurrent allocations cannot overlap; reject overflowing alignment arithmetic and retain Guardian capacity limits. Document that reset requires all heap users to be quiescent.

@@ -9,4 +9,5 @@ pub mod once;
 pub mod registers;
 pub mod volatile;
 
+pub(crate) mod once_take;
 pub(crate) mod spsc;
