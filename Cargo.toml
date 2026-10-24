@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "hw_ultra"
-version = "0.1.2"
+version = "0.2.0"
 build = false
 include = [
     "src/**",

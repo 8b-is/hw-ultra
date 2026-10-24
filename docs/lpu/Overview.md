@@ -89,4 +89,4 @@ a consumed owner. The device singleton remains shared and unchanged.
 Standalone owners can still be created with `Inference::new()` and
 `LpuScheduler::new()` without initializing hardware. Queue tests do not verify
 DMA, model execution, device initialization or hardware performance. This is a
-source-breaking migration; release/version coordination remains pending.
+source-breaking migration for the 0.2.0 release; callers must update their ownership flow.

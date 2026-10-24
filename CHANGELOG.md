@@ -3,9 +3,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.2.0 — 2026-10-24
 
 ### Changed
+- GPU queue enqueue/dequeue, scheduler submit/poll and command submission require mutable ownership. `split()` lends one producer and one consumer for concurrent use while retaining the 63-command capacity.
 - LPU pipeline, scheduler and inference mutation now requires owned mutable access. Lifecycle accessors transfer each initialized engine/scheduler once via `take_inference` and `take_scheduler`; queue split endpoints preserve concurrent producer/consumer use and the 32-item capacity. This is a source-breaking migration.
 
 ### Fixed
