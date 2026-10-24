@@ -35,6 +35,17 @@ impl<T: Copy, const N: usize> Queue<T, N> {
         }
     }
 
+    // The queue cannot be inspected while its exclusive split borrow is active.
+    pub fn len(&self) -> usize {
+        let head = self.inner.head.load(Ordering::Relaxed);
+        let tail = self.inner.tail.load(Ordering::Relaxed);
+        if head >= tail {
+            head - tail
+        } else {
+            N - tail + head
+        }
+    }
+
     // The exclusive queue borrow prevents a second active endpoint pair.
     pub fn split(&mut self) -> (Producer<'_, T, N>, Consumer<'_, T, N>) {
         (

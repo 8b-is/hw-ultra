@@ -70,3 +70,23 @@ Singleton via `Once<LpuDevice>`.
 | Data unit | `Tensor` | Raw byte payload |
 | Pipeline | Graph compilation | Inference pipeline |
 | Quantization | N/A | FP16, INT8, INT4 |
+
+## Queue ownership migration
+
+LPU pipelines and schedulers retain capacity for 32 pending items. Mutating
+methods on `LpuPipeline`, `LpuScheduler`, and `Inference` require mutable owners;
+`LpuScheduler::run_one` also takes a mutable inference engine. A pipeline or
+scheduler may be split into one non-cloneable producer and consumer for scoped
+concurrent use. Pending counts are read from the owner after its endpoints are
+returned. There are no spin locks in these queue operations.
+
+After hardware initialization, replace `lifecycle::inference()` and
+`lifecycle::scheduler()` with `take_inference()` and `take_scheduler()`. Each
+returns an owned value at most once. Before initialization or after another
+caller takes ownership, it returns None. Repeating initialization cannot recreate
+a consumed owner. The device singleton remains shared and unchanged.
+
+Standalone owners can still be created with `Inference::new()` and
+`LpuScheduler::new()` without initializing hardware. Queue tests do not verify
+DMA, model execution, device initialization or hardware performance. This is a
+source-breaking migration for the 0.2.0 release; callers must update their ownership flow.

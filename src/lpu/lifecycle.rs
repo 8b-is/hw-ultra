@@ -1,10 +1,10 @@
 use super::inference::Inference;
 use super::scheduler::LpuScheduler;
-use crate::common::once::Once;
+use crate::common::once_take::OnceTake;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-static LPU_INFERENCE: Once<Inference> = Once::new();
-static LPU_SCHEDULER: Once<LpuScheduler> = Once::new();
+static LPU_INFERENCE: OnceTake<Inference> = OnceTake::new();
+static LPU_SCHEDULER: OnceTake<LpuScheduler> = OnceTake::new();
 
 pub fn init() {
     match crate::arch::detect_arch() {
@@ -58,14 +58,7 @@ pub fn init() {
     }
 
     crate::lpu::device::init();
-    if LPU_INFERENCE.get().is_none() {
-        let ok_infer = LPU_INFERENCE.set(Inference::new());
-        if !ok_infer {}
-    }
-    if LPU_SCHEDULER.get().is_none() {
-        let ok_sched = LPU_SCHEDULER.set(LpuScheduler::new());
-        if !ok_sched {}
-    }
+    initialize_queues(&LPU_INFERENCE, &LPU_SCHEDULER);
 
     let base = crate::firmware::devicetree::find_device_by_compatible(b"arm,lpu")
         .map(|(b, _, _)| b)
@@ -115,10 +108,37 @@ pub fn init() {
     }
 }
 
-pub fn inference() -> Option<&'static Inference> {
-    LPU_INFERENCE.get()
+/// Transfer the initialized engine to one owner. Later calls return None.
+pub fn take_inference() -> Option<Inference> {
+    LPU_INFERENCE.take()
 }
 
-pub fn scheduler() -> Option<&'static LpuScheduler> {
-    LPU_SCHEDULER.get()
+/// Transfer the initialized scheduler to one owner. Later calls return None.
+pub fn take_scheduler() -> Option<LpuScheduler> {
+    LPU_SCHEDULER.take()
+}
+
+fn initialize_queues(inference: &OnceTake<Inference>, scheduler: &OnceTake<LpuScheduler>) {
+    // Repeated hardware initialization must not recreate consumed queue owners.
+    let _ = inference.set(Inference::new());
+    let _ = scheduler.set(LpuScheduler::new());
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn queue_ownership_is_not_recreated_by_reinitialization() {
+        let inference = OnceTake::new();
+        let scheduler = OnceTake::new();
+        assert!(inference.take().is_none());
+        assert!(scheduler.take().is_none());
+        initialize_queues(&inference, &scheduler);
+        let engine = inference.take().unwrap();
+        let sched = scheduler.take().unwrap();
+        assert_eq!(engine.pending(), 0);
+        assert_eq!(sched.pending(), 0);
+        initialize_queues(&inference, &scheduler);
+        assert!(inference.take().is_none());
+        assert!(scheduler.take().is_none());
+    }
 }

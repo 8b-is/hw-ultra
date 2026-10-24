@@ -1,5 +1,4 @@
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::common::spsc;
 
 #[derive(Copy, Clone)]
 pub struct PipelineJob {
@@ -8,69 +7,92 @@ pub struct PipelineJob {
     pub align: usize,
 }
 
-const PIPELINE_DEPTH: usize = 32;
+// One reserved slot preserves the existing 32-job usable capacity.
+const PIPELINE_SLOTS: usize = 33;
+pub type Producer<'a> = spsc::Producer<'a, PipelineJob, PIPELINE_SLOTS>;
+pub type Consumer<'a> = spsc::Consumer<'a, PipelineJob, PIPELINE_SLOTS>;
 
+/// An owned inference queue. Shared references cannot mutate it.
+/// ```compile_fail
+/// use hw_ultra::sys::lpu::pipeline::{LpuPipeline, PipelineJob};
+/// fn shared(pipeline: &LpuPipeline) {
+///     pipeline.push(PipelineJob { bytes: 1, flags: 0, align: 1 });
+/// }
+/// ```
 pub struct LpuPipeline {
-    slots: UnsafeCell<[Option<PipelineJob>; PIPELINE_DEPTH]>,
-    head: AtomicUsize,
-    tail: AtomicUsize,
-    count: AtomicUsize,
+    queue: spsc::Queue<PipelineJob, PIPELINE_SLOTS>,
 }
-
-unsafe impl Sync for LpuPipeline {}
-
 impl Default for LpuPipeline {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl LpuPipeline {
     pub const fn new() -> Self {
-        LpuPipeline {
-            slots: UnsafeCell::new([None; PIPELINE_DEPTH]),
-            head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
-            count: AtomicUsize::new(0),
+        Self {
+            queue: spsc::Queue::new(),
         }
     }
-
     pub fn len(&self) -> usize {
-        self.count.load(Ordering::Acquire)
+        self.queue.len()
     }
-
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    pub fn push(&self, job: PipelineJob) -> bool {
-        let count = self.count.load(Ordering::Acquire);
-        if count >= PIPELINE_DEPTH {
-            return false;
-        }
-        let head = self.head.load(Ordering::Acquire);
-        unsafe {
-            (*self.slots.get())[head] = Some(job);
-        }
-        self.head
-            .store((head + 1) % PIPELINE_DEPTH, Ordering::Release);
-        self.count.fetch_add(1, Ordering::AcqRel);
-        true
+    pub fn split(&mut self) -> (Producer<'_>, Consumer<'_>) {
+        self.queue.split()
     }
-
-    pub fn pop(&self) -> Option<PipelineJob> {
-        let count = self.count.load(Ordering::Acquire);
-        if count == 0 {
-            return None;
+    pub fn push(&mut self, job: PipelineJob) -> bool {
+        let (mut producer, _) = self.split();
+        producer.enqueue(job).is_ok()
+    }
+    pub fn pop(&mut self) -> Option<PipelineJob> {
+        let (_, mut consumer) = self.split();
+        consumer.dequeue()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn preserves_capacity_fifo_and_wraparound() {
+        let mut p = LpuPipeline::new();
+        for round in 0..40 {
+            assert!(p.is_empty());
+            for i in 0..32 {
+                assert!(p.push(PipelineJob {
+                    bytes: round * 32 + i,
+                    flags: 0,
+                    align: 1
+                }));
+            }
+            assert_eq!(p.len(), 32);
+            assert!(!p.push(PipelineJob {
+                bytes: 9999,
+                flags: 0,
+                align: 1
+            }));
+            for i in 0..32 {
+                assert_eq!(p.pop().unwrap().bytes, round * 32 + i);
+            }
+            assert_eq!(p.len(), 0);
+            assert!(p.pop().is_none());
         }
-        let tail = self.tail.load(Ordering::Acquire);
-        let item = unsafe {
-            let slots = &mut *self.slots.get();
-            slots[tail].take()
-        };
-        self.tail
-            .store((tail + 1) % PIPELINE_DEPTH, Ordering::Release);
-        self.count.fetch_sub(1, Ordering::AcqRel);
-        item
+    }
+    #[test]
+    fn split_preserves_pending_jobs() {
+        let mut p = LpuPipeline::new();
+        {
+            let (mut producer, mut consumer) = p.split();
+            assert!(producer
+                .enqueue(PipelineJob {
+                    bytes: 42,
+                    flags: 7,
+                    align: 8
+                })
+                .is_ok());
+            assert_eq!(consumer.dequeue().unwrap().flags, 7);
+        }
+        assert!(p.is_empty());
     }
 }
